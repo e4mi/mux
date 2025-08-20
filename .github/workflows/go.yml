@@ -1,6 +1,12 @@
 name: Go Cross-Platform Build
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag'
+        required: true
+        default: 'v0.0.0'
   push:
     tags:
       - "v*"
