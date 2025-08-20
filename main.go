@@ -160,8 +160,8 @@ func main() {
 	portFlag := flag.String("port", "80", "Port to listen on")
 	userFlag := flag.String("user", os.Getenv("USER"), "Run service as user")
 	flag.Usage = func() {
-		fmt.Println("Usage: mux -dir <dir> [options]\n")
-		fmt.Println("A simple web server for managing multiple apps.\nProxies requests to http://*.localhost to applications in <dir>/*.\nAutostarts apps with $PORT set to random port.\nApp command is configured in Procfile in format: web: <cmd>\n")
+		fmt.Print("Usage: mux -dir <dir> [options]\n\n")
+		fmt.Print("A simple web server for managing multiple apps.\nProxies requests to http://*.localhost to applications in <dir>/*.\nAutostarts apps with $PORT set to random port.\nApp command is configured in Procfile in format: web: <cmd>\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
