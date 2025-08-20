@@ -28,17 +28,17 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w" -o build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          go build -ldflags="-s -w" -o ${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
 
       - name: upx
         run: |
           sudo apt-get update && sudo apt-get install -y upx
-          upx build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }} || true
+          upx ${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }} || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
 
   release:
     needs: build
@@ -50,3 +50,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            ${{ github.event.repository.name }}-*
