@@ -1,10 +1,8 @@
-name: Go Cross-Platform Build
-
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag'
+        description: 'tag'
         required: true
         default: 'v0.0.0'
   push:
@@ -32,13 +30,12 @@ jobs:
         run: |
           go build -ldflags="-s -w" -o build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
 
-      - name: UPX
+      - name: upx
         run: |
           sudo apt-get update && sudo apt-get install -y upx
           upx build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }} || true
 
-      - name: Upload Binaries
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -49,12 +46,5 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: build/
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          files: build/*
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
