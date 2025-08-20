@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kardianos/service"
 )
 
 var (
@@ -23,9 +26,9 @@ var (
 		t time.Time
 	}{}
 	mu      sync.Mutex
-	root    = "./apps"
-	domain  = "localhost"
-	port    = "80"
+	root    = ""
+	domain  = ""
+	port    = ""
 	idleTTL = 10 * time.Minute
 )
 
@@ -116,19 +119,16 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	a.p.ServeHTTP(w, r)
 }
 
-func main() {
-	if len(os.Args) > 1 {
-		root = os.Args[1]
-	}
+type program struct{}
+
+func (p *program) Start(s service.Service) error {
+	go p.run()
+	return nil
+}
+
+func (p *program) run() {
 	if strings.HasPrefix(root, "~") {
 		root = filepath.Join(os.Getenv("HOME"), root[1:])
-	}
-	if len(os.Args) > 2 {
-		parts := strings.Split(os.Args[2], ":")
-		domain, port = parts[0], parts[1]
-		if port == "" {
-			port = "80"
-		}
 	}
 	go func() {
 		for range time.Tick(30 * time.Second) {
@@ -146,4 +146,81 @@ func main() {
 	url := fmt.Sprintf("http://%s:%s", domain, port)
 	log.Printf("Serving %s from %s/*", strings.TrimSuffix(url, ":80"), root)
 	log.Fatal(http.ListenAndServe(":"+port, http.HandlerFunc(handler)))
+}
+
+func (p *program) Stop(s service.Service) error {
+	return nil
+}
+
+func main() {
+	enableFlag := flag.Bool("enable", false, "Enable and install service")
+	disableFlag := flag.Bool("disable", false, "Disable and uninstall service")
+	dirFlag := flag.String("dir", "", "Directory to serve applications from")
+	hostFlag := flag.String("host", "localhost", "Domain to serve applications on")
+	portFlag := flag.String("port", "80", "Port to listen on")
+	userFlag := flag.String("user", os.Getenv("USER"), "Run service as user")
+	flag.Usage = func() {
+		fmt.Println("Usage: mux -dir <dir> [options]\n")
+		fmt.Println("A simple web server for managing multiple apps.\nProxies requests to http://*.localhost to applications in <dir>/*.\nAutostarts apps with $PORT set to random port.\nApp command is configured in Procfile in format: web: <cmd>\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+	if *dirFlag == "" {
+		fmt.Println("Missing argument -dir <dir>")
+		os.Exit(1)
+	}
+
+	root, domain, port = *dirFlag, *hostFlag, *portFlag
+
+	svcConfig := &service.Config{
+		Name:        "mux",
+		DisplayName: "Mux Web Server",
+		Description: "A simple web server for managing multiple apps.",
+		UserName:    *userFlag,
+		Arguments:   []string{fmt.Sprintf("-dir=%s", *dirFlag), fmt.Sprintf("-host=%s", *hostFlag), fmt.Sprintf("-port=%s", *portFlag)},
+	}
+
+	prg := &program{}
+	s, err := service.New(prg, svcConfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if *enableFlag {
+		err = s.Install()
+		if err != nil {
+			log.Printf("Failed to install service: %s", err)
+		} else {
+			fmt.Println("Service installed.")
+		}
+		err = s.Start()
+		if err != nil {
+			log.Printf("Failed to start service: %s", err)
+		} else {
+			fmt.Println("Service started.")
+		}
+		log.Print(append(svcConfig.Arguments, "--user="+*userFlag))
+		return
+	}
+
+	if *disableFlag {
+		err = s.Stop()
+		if err != nil {
+			log.Printf("Failed to stop service: %s", err)
+		} else {
+			fmt.Println("Service stopped.")
+		}
+		err = s.Uninstall()
+		if err != nil {
+			log.Printf("Failed to uninstall service: %s", err)
+		} else {
+			fmt.Println("Service disabled.")
+		}
+		return
+	}
+
+	err = s.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
