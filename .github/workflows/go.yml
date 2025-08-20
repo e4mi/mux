@@ -1,10 +1,9 @@
-name: Build Releases
+name: Go Cross-Platform Build
 
 on:
   push:
     tags:
-      - "*"
-  workflow_dispatch:
+      - "v*"
 
 jobs:
   build:
@@ -13,37 +12,42 @@ jobs:
       matrix:
         goos: [linux, windows, darwin]
         goarch: [amd64, arm64]
+
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v4
         with:
-          go-version: '1.22'
-
-      - name: Build binary
+          go-version: "1.24"
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
         run: |
-          mkdir -p build
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o build/myapp-${{ matrix.goos }}-${{ matrix.goarch }} .
+          go build -ldflags="-s -w" -o build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
 
-      - name: Upload artifact
+      - name: UPX
+        run: |
+          sudo apt-get update && sudo apt-get install -y upx
+          upx --best --lzma build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: myapp-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: build/myapp-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: ${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: build
-
-      - name: Create GitHub Release
+          path: build/
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/**
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: build/*
