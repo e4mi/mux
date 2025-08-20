@@ -2,9 +2,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'tag'
+        description: "tag"
         required: true
-        default: 'v0.0.0'
+        default: "v0.0.0"
   push:
     tags:
       - "v*"
@@ -40,15 +40,15 @@ jobs:
           name: ${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          files: |
-            ${{ github.event.repository.name }}-*
+release:
+  needs: build
+  runs-on: ubuntu-latest
+  permissions:
+    contents: write
+  steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: dist
+    - uses: softprops/action-gh-release@v1
+      with:
+        files: dist/**/*
