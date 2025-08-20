@@ -35,7 +35,7 @@ jobs:
       - name: UPX
         run: |
           sudo apt-get update && sudo apt-get install -y upx
-          upx --best --lzma build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          upx build/${{ github.event.repository.name }}-${{ matrix.goos }}-${{ matrix.goarch }} || true
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
