@@ -16,5 +16,3 @@ App command is configured in Procfile in format: web: <cmd>
         Domain to serve applications on (default "localhost")
   -port string
         Port to listen on (default "80")
-  -user string
-        Run service as user (default "emily")
