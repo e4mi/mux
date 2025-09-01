@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -127,9 +128,6 @@ func (p *program) Start(s service.Service) error {
 }
 
 func (p *program) run() {
-	if strings.HasPrefix(root, "~") {
-		root = filepath.Join(os.Getenv("HOME"), root[1:])
-	}
 	go func() {
 		for range time.Tick(30 * time.Second) {
 			mu.Lock()
@@ -144,7 +142,7 @@ func (p *program) run() {
 		}
 	}()
 	url := fmt.Sprintf("http://%s:%s", domain, port)
-	log.Printf("Serving %s from %s/*", strings.TrimSuffix(url, ":80"), root)
+	log.Printf("%s (%s)", strings.TrimSuffix(url, ":80"), root)
 	log.Fatal(http.ListenAndServe(":"+port, http.HandlerFunc(handler)))
 }
 
@@ -153,13 +151,15 @@ func (p *program) Stop(s service.Service) error {
 }
 
 func main() {
+	var err error
+	var s service.Service
 	enableFlag := flag.Bool("enable", false, "Enable and install service")
 	disableFlag := flag.Bool("disable", false, "Disable and uninstall service")
-	dirFlag := flag.String("dir", "", "Directory to serve applications from")
+	dirFlag := flag.String("dir", "~/Web", "Directory to serve applications from")
 	hostFlag := flag.String("host", "localhost", "Domain to serve applications on")
-	portFlag := flag.String("port", "80", "Port to listen on")
+	portFlag := flag.String("port", "7777", "Port to listen on")
 	flag.Usage = func() {
-		fmt.Print("Usage: mux -dir <dir> [options]\n\n")
+		fmt.Printf("Usage: mux -dir <dir> [options]\n\n")
 		fmt.Print("A simple web server for managing multiple apps.\nProxies requests to http://*.localhost to applications in <dir>/*.\nAutostarts apps with $PORT set to random port.\nApp command is configured in Procfile in format: web: <cmd>\n\n")
 		flag.PrintDefaults()
 	}
@@ -170,16 +170,32 @@ func main() {
 	}
 
 	root, domain, port = *dirFlag, *hostFlag, *portFlag
+	if strings.HasPrefix(root, "~") {
+		root = filepath.Join(os.Getenv("HOME"), root[1:])
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	currentUser, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	svcConfig := &service.Config{
 		Name:        "mux",
 		DisplayName: "Mux Web Server",
 		Description: "A simple web server for managing multiple apps.",
 		Arguments:   []string{fmt.Sprintf("-dir=%s", *dirFlag), fmt.Sprintf("-host=%s", *hostFlag), fmt.Sprintf("-port=%s", *portFlag)},
+		UserName:    currentUser.Username,
+		Option: service.KeyValue{
+			"UserService": currentUser.Uid != "0",
+		},
 	}
 
 	prg := &program{}
-	s, err := service.New(prg, svcConfig)
+	s, err = service.New(prg, svcConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -187,15 +203,11 @@ func main() {
 	if *enableFlag {
 		err = s.Install()
 		if err != nil {
-			log.Printf("Failed to install service: %s", err)
-		} else {
-			fmt.Println("Service installed.")
+			log.Print(err)
 		}
 		err = s.Start()
 		if err != nil {
-			log.Printf("Failed to start service: %s", err)
-		} else {
-			fmt.Println("Service started.")
+			log.Print(err)
 		}
 		log.Print(svcConfig.Arguments)
 		return
@@ -204,15 +216,11 @@ func main() {
 	if *disableFlag {
 		err = s.Stop()
 		if err != nil {
-			log.Printf("Failed to stop service: %s", err)
-		} else {
-			fmt.Println("Service stopped.")
+			log.Print(err)
 		}
 		err = s.Uninstall()
 		if err != nil {
-			log.Printf("Failed to uninstall service: %s", err)
-		} else {
-			fmt.Println("Service disabled.")
+			log.Print(err)
 		}
 		return
 	}
