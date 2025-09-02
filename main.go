@@ -322,6 +322,9 @@ func main() {
 			fmt.Sprintf("-host=%s", domain),
 			fmt.Sprintf("-port=%s", port),
 		},
+		EnvVars: map[string]string{
+			"PATH": os.Getenv("PATH"),
+		},
 		UserName: currentUser.Username,
 		Option: service.KeyValue{
 			"UserService": currentUser.Uid != "0",
