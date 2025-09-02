@@ -17,21 +17,32 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/kardianos/service"
+	ignore "github.com/sabhiram/go-gitignore"
 )
 
 var (
-	apps = map[string]struct {
-		p *httputil.ReverseProxy
-		c *exec.Cmd
-		t time.Time
-	}{}
+	apps    = map[string]*appInfo{}
 	mu      sync.Mutex
 	root    = ""
 	domain  = ""
 	port    = ""
 	idleTTL = 10 * time.Minute
+	verbose = false
 )
+
+type appInfo struct {
+	name    string
+	dir     string
+	p       *httputil.ReverseProxy
+	c       *exec.Cmd
+	t       time.Time
+	watcher *fsnotify.Watcher
+	ig      *ignore.GitIgnore
+}
+
+const debounceDelay = 1000 * time.Millisecond
 
 func freePort() int {
 	l, _ := net.Listen("tcp", "127.0.0.1:0")
@@ -50,15 +61,52 @@ func waitPort(port int, timeout time.Duration) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("timeout waiting for %s", addr)
+	return fmt.Errorf("TIMEOUT %s", addr)
 }
 
-func start(name string) (*httputil.ReverseProxy, *exec.Cmd, error) {
-	f, err := os.Open(filepath.Join(root, name, "Procfile"))
+func loadInvertedIgnore(file string) (*ignore.GitIgnore, error) {
+	return ignore.CompileIgnoreFile(file)
+}
+
+func matchInverted(path string, ig *ignore.GitIgnore) bool {
+	if ig == nil {
+		return false
+	}
+	parts := strings.Split(path, string(filepath.Separator))
+	for _, part := range parts {
+		if strings.HasPrefix(part, ".") {
+			if !ig.MatchesPath(path) {
+				return false
+			}
+		}
+	}
+
+	return ig.MatchesPath(path)
+}
+
+func addRecursive(w *fsnotify.Watcher, root string) error {
+	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return w.Add(path)
+		}
+		return nil
+	})
+}
+
+func start(name string) (*appInfo, error) {
+	dir := filepath.Join(root, name)
+	f, err := os.Open(filepath.Join(dir, "Procfile"))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer f.Close()
+
 	var cmdStr string
 	s := bufio.NewScanner(f)
 	for s.Scan() {
@@ -68,21 +116,96 @@ func start(name string) (*httputil.ReverseProxy, *exec.Cmd, error) {
 		}
 	}
 	if cmdStr == "" {
-		return nil, nil, fmt.Errorf("no web entry")
+		return nil, fmt.Errorf("NO web: in %s/Procfile", dir)
 	}
+
 	fp := freePort()
-	log.Printf("START: PWD=%s PORT=%d %s", filepath.Join(root, name), fp, cmdStr)
+	if verbose {
+		log.Printf("START: PWD=%s PORT=%d %s", dir, fp, cmdStr)
+	}
 	cmd := exec.Command("sh", "-c", cmdStr)
-	cmd.Dir, cmd.Env = filepath.Join(root, name), append(os.Environ(), fmt.Sprintf("PORT=%d", fp))
+	cmd.Dir, cmd.Env = dir, append(os.Environ(), fmt.Sprintf("PORT=%d", fp))
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := waitPort(fp, 5*time.Second); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+
 	u, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", fp))
-	return httputil.NewSingleHostReverseProxy(u), cmd, nil
+	proxy := httputil.NewSingleHostReverseProxy(u)
+
+	app := &appInfo{
+		name: name,
+		dir:  dir,
+		p:    proxy,
+		c:    cmd,
+		t:    time.Now(),
+	}
+
+	startWatcher(app)
+
+	return app, nil
+}
+
+func stopApp(app *appInfo) {
+	if verbose {
+		log.Print("STOP: ", app.name)
+	}
+	mu.Lock()
+	_ = app.c.Process.Kill()
+	app.watcher.Close()
+	delete(apps, app.name)
+	mu.Unlock()
+}
+
+func startWatcher(app *appInfo) {
+	if app.watcher != nil {
+		app.watcher.Close()
+	}
+
+	ig, _ := loadInvertedIgnore(filepath.Join(app.dir, ".watch"))
+	app.ig = ig
+
+	watcher, _ := fsnotify.NewWatcher()
+	_ = addRecursive(watcher, app.dir)
+	app.watcher = watcher
+
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Name == filepath.Join(app.dir, ".watch") {
+					if verbose {
+						log.Print("UPDATED: ", event.Name)
+					}
+					stopApp(app)
+				}
+				if event.Op&fsnotify.Create == fsnotify.Create {
+					if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
+						if matchInverted(event.Name, ig) {
+							_ = addRecursive(watcher, event.Name)
+						}
+					}
+				}
+				if matchInverted(event.Name, ig) {
+					if verbose {
+						log.Print("UPDATED: ", event.Name)
+					}
+					stopApp(app)
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Print(err)
+			}
+		}
+	}()
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -102,20 +225,16 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	a, ok := apps[name]
 	if !ok {
-		p, c, err := start(name)
+		newApp, err := start(name)
 		if err != nil {
 			mu.Unlock()
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		a = struct {
-			p *httputil.ReverseProxy
-			c *exec.Cmd
-			t time.Time
-		}{p, c, time.Now()}
+		apps[name] = newApp
+		a = newApp
 	}
 	a.t = time.Now()
-	apps[name] = a
 	mu.Unlock()
 	a.p.ServeHTTP(w, r)
 }
@@ -131,11 +250,12 @@ func (p *program) run() {
 	go func() {
 		for range time.Tick(30 * time.Second) {
 			mu.Lock()
-			for n, a := range apps {
+			for _, a := range apps {
 				if time.Since(a.t) > idleTTL {
-					log.Println("STOP:", n)
-					_ = a.c.Process.Kill()
-					delete(apps, n)
+					if verbose {
+						log.Print("IDLE: ", a.name)
+					}
+					stopApp(a)
 				}
 			}
 			mu.Unlock()
@@ -153,23 +273,34 @@ func (p *program) Stop(s service.Service) error {
 func main() {
 	var err error
 	var s service.Service
-	enableFlag := flag.Bool("enable", false, "Enable and install service")
-	disableFlag := flag.Bool("disable", false, "Disable and uninstall service")
-	dirFlag := flag.String("dir", "~/Web", "Directory to serve applications from")
-	hostFlag := flag.String("host", "localhost", "Domain to serve applications on")
-	portFlag := flag.String("port", "7777", "Port to listen on")
 	flag.Usage = func() {
-		fmt.Printf("Usage: mux [options]\n\n")
-		fmt.Print("A simple web server for managing multiple apps.\nProxies requests to http://*.localhost to applications in ~/Web/*.\nAutostarts apps with $PORT set to random port.\nApp command is configured in Procfile in format: web: <cmd>\n\n")
+		fmt.Fprint(os.Stderr,
+			"\n",
+			"Autostarts apps and serves them at subdomains. Reloads them on changes.\n",
+			"\n",
+			"Setup with:\n",
+			"  mux -enable\n",
+			"\n",
+			"Setup apps:\n",
+			"  ~/Web/APP/Procfile:  web: ./start.sh $PORT\n",
+			"  ~/Web/APP/.watch:    src/*\n",
+			"\n",
+			"Visiting http://APP.localhost will start and serve the app.\n",
+			"\n",
+			"Options:\n",
+		)
 		flag.PrintDefaults()
+		fmt.Fprint(os.Stderr, "\n")
 	}
+	enableFlag := flag.Bool("enable", false, "start on boot")
+	disableFlag := flag.Bool("disable", false, "disable start on boot")
+	dirFlag := flag.String("dir", "~/Web", "directory to serve applications from")
+	hostFlag := flag.String("host", "localhost", "serve on http://*.HOST")
+	portFlag := flag.String("port", "7777", "port to listen on")
+	verboseFlag := flag.Bool("verbose", false, "verbose logging")
 	flag.Parse()
-	if *dirFlag == "" {
-		fmt.Println("Missing argument -dir <dir>")
-		os.Exit(1)
-	}
 
-	root, domain, port = *dirFlag, *hostFlag, *portFlag
+	root, domain, port, verbose = *dirFlag, *hostFlag, *portFlag, *verboseFlag
 	if strings.HasPrefix(root, "~") {
 		root = filepath.Join(os.Getenv("HOME"), root[1:])
 	}
@@ -186,8 +317,12 @@ func main() {
 	svcConfig := &service.Config{
 		Name:        "mux",
 		DisplayName: "Mux Web Server",
-		Arguments:   []string{fmt.Sprintf("-dir=%s", *dirFlag), fmt.Sprintf("-host=%s", *hostFlag), fmt.Sprintf("-port=%s", *portFlag)},
-		UserName:    currentUser.Username,
+		Arguments: []string{
+			fmt.Sprintf("-dir=%s", *dirFlag),
+			fmt.Sprintf("-host=%s", *hostFlag),
+			fmt.Sprintf("-port=%s", *portFlag),
+		},
+		UserName: currentUser.Username,
 		Option: service.KeyValue{
 			"UserService": currentUser.Uid != "0",
 		},
@@ -200,12 +335,10 @@ func main() {
 	}
 
 	if *enableFlag {
-		err = s.Install()
-		if err != nil {
+		if err = s.Install(); err != nil {
 			log.Print(err)
 		}
-		err = s.Start()
-		if err != nil {
+		if err = s.Start(); err != nil {
 			log.Print(err)
 		}
 		log.Print(svcConfig.Arguments)
@@ -213,19 +346,16 @@ func main() {
 	}
 
 	if *disableFlag {
-		err = s.Stop()
-		if err != nil {
+		if err = s.Stop(); err != nil {
 			log.Print(err)
 		}
-		err = s.Uninstall()
-		if err != nil {
+		if err = s.Uninstall(); err != nil {
 			log.Print(err)
 		}
 		return
 	}
 
-	err = s.Run()
-	if err != nil {
+	if err = s.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
