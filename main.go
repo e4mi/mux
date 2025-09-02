@@ -318,7 +318,7 @@ func main() {
 		Name:        "mux",
 		DisplayName: "Mux Web Server",
 		Arguments: []string{
-			fmt.Sprintf("-dir=%s", *dirFlag),
+			fmt.Sprintf("-dir=%s", root),
 			fmt.Sprintf("-host=%s", *hostFlag),
 			fmt.Sprintf("-port=%s", *portFlag),
 		},
