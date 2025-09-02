@@ -322,7 +322,7 @@ func main() {
 			fmt.Sprintf("-host=%s", *hostFlag),
 			fmt.Sprintf("-port=%s", *portFlag),
 		},
-		UserName: currentUser.Username,
+		// UserName: currentUser.Username,
 		Option: service.KeyValue{
 			"UserService": currentUser.Uid != "0",
 		},
@@ -341,7 +341,7 @@ func main() {
 		if err = s.Start(); err != nil {
 			log.Print(err)
 		}
-		log.Print(svcConfig.Arguments)
+		log.Print(svcConfig.Arguments, currentUser.Username, currentUser.Uid != "0")
 		return
 	}
 
