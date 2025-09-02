@@ -319,10 +319,10 @@ func main() {
 		DisplayName: "Mux Web Server",
 		Arguments: []string{
 			fmt.Sprintf("-dir=%s", root),
-			fmt.Sprintf("-host=%s", *hostFlag),
-			fmt.Sprintf("-port=%s", *portFlag),
+			fmt.Sprintf("-host=%s", domain),
+			fmt.Sprintf("-port=%s", port),
 		},
-		// UserName: currentUser.Username,
+		UserName: currentUser.Username,
 		Option: service.KeyValue{
 			"UserService": currentUser.Uid != "0",
 		},
@@ -341,7 +341,7 @@ func main() {
 		if err = s.Start(); err != nil {
 			log.Print(err)
 		}
-		log.Print(svcConfig.Arguments, currentUser.Username, currentUser.Uid != "0")
+		log.Print(svcConfig.Arguments)
 		return
 	}
 
