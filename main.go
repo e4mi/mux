@@ -123,7 +123,8 @@ func start(name string) (*appInfo, error) {
 	if verbose {
 		log.Printf("START: PWD=%s PORT=%d %s", dir, fp, cmdStr)
 	}
-	cmd := exec.Command("sh", "-c", cmdStr)
+	cmdParts := strings.Fields(cmdStr)
+	cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
 	cmd.Dir, cmd.Env = dir, append(os.Environ(), fmt.Sprintf("PORT=%d", fp))
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
