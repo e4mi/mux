@@ -159,8 +159,8 @@ func main() {
 	hostFlag := flag.String("host", "localhost", "Domain to serve applications on")
 	portFlag := flag.String("port", "7777", "Port to listen on")
 	flag.Usage = func() {
-		fmt.Printf("Usage: mux -dir <dir> [options]\n\n")
-		fmt.Print("A simple web server for managing multiple apps.\nProxies requests to http://*.localhost to applications in <dir>/*.\nAutostarts apps with $PORT set to random port.\nApp command is configured in Procfile in format: web: <cmd>\n\n")
+		fmt.Printf("Usage: mux [options]\n\n")
+		fmt.Print("A simple web server for managing multiple apps.\nProxies requests to http://*.localhost to applications in ~/Web/*.\nAutostarts apps with $PORT set to random port.\nApp command is configured in Procfile in format: web: <cmd>\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -186,7 +186,6 @@ func main() {
 	svcConfig := &service.Config{
 		Name:        "mux",
 		DisplayName: "Mux Web Server",
-		Description: "A simple web server for managing multiple apps.",
 		Arguments:   []string{fmt.Sprintf("-dir=%s", *dirFlag), fmt.Sprintf("-host=%s", *hostFlag), fmt.Sprintf("-port=%s", *portFlag)},
 		UserName:    currentUser.Username,
 		Option: service.KeyValue{
